@@ -113,16 +113,16 @@ TagAccessory.prototype.identify = function(callback) {
 
 TagAccessory.prototype.onKeyPress = function() {
   var characteristic = this.service.getCharacteristic(Characteristic.ProgrammableSwitchEvent);
-  this.presses += 1;
+	if (this.presses <3) {
+		this.presses += 1;
+	}
 
-  if (this.presses > 3) {
-    this.presses = 3
-  }
+	this.log(`got press ${this.presses}`)
 
   clearTimeout(this.timeout)
 
   this.timeout = setTimeout(() => {
     characteristic.setValue(this.presses);
     this.presses = -1
-  }, 250)
+  }, 500)
 };
