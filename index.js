@@ -16,6 +16,8 @@ function TagAccessory(log, config) {
   this.noble = require('noble');
   this.noble.on('stateChange', this.onStateChange.bind(this));
   this.noble.on('discover', this.onDiscoverPeripheral.bind(this));
+
+  this.presses = -1;
 }
 
 TagAccessory.prototype.getServices = function() {
@@ -110,7 +112,17 @@ TagAccessory.prototype.identify = function(callback) {
 };
 
 TagAccessory.prototype.onKeyPress = function() {
-  this.log('key press');
   var characteristic = this.service.getCharacteristic(Characteristic.ProgrammableSwitchEvent);
-  characteristic.setValue(true);
+  this.presses += 1;
+
+  if (this.presses > 3) {
+    this.presses = 3
+  }
+
+  clearTimeout(this.timeout)
+
+  this.timeout = setTimeout(() => {
+    characteristic.setValue(this.presses);
+    this.presses = -1
+  }, 250)
 };
