@@ -32,7 +32,7 @@ TagAccessory.prototype.onStateChange = function(state) {
 
 TagAccessory.prototype.discoverTag = function() {
   this.log('scanning');
-  this.noble.startScanning(['1802'], false);
+  this.noble.startScanning([], false);
 };
 
 TagAccessory.prototype.onDiscoverPeripheral = function(peripheral) {
@@ -60,7 +60,7 @@ TagAccessory.prototype.onConnect = function(error) {
   }
 
   this.log('connected');
-  this.peripheral.discoverSomeServicesAndCharacteristics([], ['ffe1', '2a06'], this.onDiscoverServicesAndCharacteristics.bind(this));
+  this.peripheral.discoverAllServicesAndCharacteristics(this.onDiscoverServicesAndCharacteristics.bind(this));
 };
 
 TagAccessory.prototype.onDisconnect = function(error) {
