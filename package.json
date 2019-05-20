@@ -1,5 +1,5 @@
 {
-  "name": "homebridge-bluetooth-tag",
+  "name": "@chee/homebridge-bluetooth-tag",
   "version": "0.0.3",
   "main": "index.js",
   "keywords": [
