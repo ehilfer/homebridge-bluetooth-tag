@@ -113,7 +113,4 @@ TagAccessory.prototype.onKeyPress = function() {
   this.log('key press');
   var characteristic = this.service.getCharacteristic(Characteristic.ProgrammableSwitchEvent);
   characteristic.setValue(true);
-  setTimeout(function() {
-    characteristic.setValue(false);
-  }, 1000);
 };
