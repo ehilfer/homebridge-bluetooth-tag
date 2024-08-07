@@ -23,6 +23,7 @@ function TagAccessory(log, config) {
   this.noble.on('discover', this.onDiscoverPeripheral.bind(this));
   this.noble.on('warning', this.onWarning.bind(this));
   this.noble.on('scanStop', this.onScanStop.bind(this));
+  this.noble.on('scanStop', this.onScanStart.bind(this));
 
   this.presses = -1;
 	this.lastButton = -1;
@@ -58,11 +59,18 @@ TagAccessory.prototype.onStateChange = function(state) {
 
 TagAccessory.prototype.discoverTag = function() {
   this.log('scanning');
-  this.noble.startScanning([], false); // todo true for duplicates for only beacon using advertisement for sensor data?
+  this.noble.startScanning([], false, this.onScanStart.bind(this)); // todo true for duplicates for only beacon using advertisement for sensor data?
+	clearTimeout(this.scanTimeout);
+	this.scanTimeout = setTimeout( this.rescan.bind(this), 15000);
 };
 
-TagAccessory.prototype.onScanStop = function() {
-	this.log( 'scan stopped');
+TagAccessory.prototype.onScanStart = function( error) {
+	this.log( 'scan started: ' + error);
+}
+
+TagAccessory.prototype.onScanStop = function( error) {
+	clearTimeout(this.scanTimeout);
+	this.log( 'scan stopped: ' + error);
 	this.log( 'adapter state: ' + this.noble.state);
 	this.log( 'peripheral: ' +  this.peripheral);
 	this.log( 'peripheral: ' +  ((this.peripheral == null) ? 'absent' : 'present'));
@@ -94,6 +102,7 @@ TagAccessory.prototype.onDiscoverPeripheral = function(peripheral) {
 
   if( this.type == "switch" || this.type == "holyiot" || this.type == "samlabs-ldr" || this.type == "samlabs-led") {
 		this.noble.stopScanning();
+		// this.peripheral.once('disconnect', this.onDisconnect.bind(this));
 		this.peripheral.once('disconnect', this.onDisconnect.bind(this));
 		this.peripheral.connect(this.onConnect.bind(this));
   }
@@ -147,7 +156,7 @@ TagAccessory.prototype.onConnect = function(error) {
 };
 
 TagAccessory.prototype.onDisconnect = function(error) {
-  this.log('disconnected');
+  this.log('disconnected: ' + error);
 	this.connected = false;
   this.peripheral = null;
   this.discoverTag();
@@ -191,21 +200,30 @@ TagAccessory.prototype.onDiscoverServicesAndCharacteristics = function(error, se
 		} else {
 			this.readCharacteristic.on('read', this.onRead.bind(this))
 			this.readCharacteristic.notify(true)
+
+			this.readCharacteristic.unsubscribe(function (error) {
+				if (error) {
+					this.log('failed to unsubscribe from uart read ' + error);
+				} else {
+					this.log('unsubscribed from uart read');
+				}
+			}.bind(this));
+
 			this.readCharacteristic.subscribe(function (error) {
 				if (error) {
 					this.log('failed to subscribe to uart read');
 				} else {
 					this.log('subscribed to uart read');
+					if (!this.writeCharacteristic) {
+						this.log('could not find write characteristic');
+					} else {
+						this.log('writing key to device');
+						this.writeCharacteristic.write( Buffer.from( [0xF3, 0x00, 0xF3, 0x06, 0xAA, 0x14, 0x06, 0x11, 0x12, 0x00]), true) // writeWithoutResponse
+						this.log('wrote key to device');
+						this.requestBattery();
+					}
 				}
 			}.bind(this));
-		}
-		if (!this.writeCharacteristic) {
-			this.log('could not find write characteristic');
-		} else {
-			this.log('writing key to device');
-			this.writeCharacteristic.write( new Buffer( [0xF3, 0x00, 0xF3, 0x06, 0xAA, 0x14, 0x06, 0x11, 0x12, 0x00]), true) // writeWithoutResponse
-			this.log('wrote key to device');
-			this.requestBattery();
 		}
 	}
 	else if( this.type == "samlabs-ldr") {
@@ -323,3 +341,11 @@ TagAccessory.prototype.onKeyPress = function() {
     this.presses = -1
   }, 1000)
 };
+
+
+TagAccessory.prototype.rescan = function() {
+	this.noble.stopScanning();
+	this.log('scanning ran too long - stopping the scan');
+};
+
+
