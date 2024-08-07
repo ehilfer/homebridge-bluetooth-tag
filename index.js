@@ -28,6 +28,8 @@ function TagAccessory(log, config) {
   this.log( "watch for state change");
   this.noble.on('stateChange', this.onStateChange.bind(this));
   this.noble.on('discover', this.onDiscoverPeripheral.bind(this));
+  this.noble.on('warning', this.onWarning.bind(this));
+  this.noble.on('scanStop', this.onScanStop.bind(this));
 
   this.presses = -1;
 	this.lastButton = -1;
@@ -66,9 +68,9 @@ TagAccessory.prototype.getServices = function() {
 };
 
 TagAccessory.prototype.onStateChange = function(state) {
-  this.log( "state change to" + state);
+  this.log( "state change to " + state);
   if (state == 'poweredOn') {
-    this.log( "state change to poweredOn");
+    this.log( "start discovery tag");
     this.discoverTag();
   }
 };
@@ -78,14 +80,29 @@ TagAccessory.prototype.discoverTag = function() {
   this.noble.startScanning([], false); // todo true for duplicates for only beacon using advertisement for sensor data?
 };
 
+TagAccessory.prototype.onScanStop = function() {
+	this.log( 'scan stopped');
+	this.log( 'adapter state: ' + this.noble.state);
+	this.log( 'peripheral: ' +  this.peripheral);
+	this.log( 'peripheral: ' +  ((this.peripheral == null) ? 'absent' : 'present'));
+	if( (this.peripheral == null) && (this.noble.state == 'poweredOn')) {
+		// TODO: how to decide whether to scan again, if the device is really not present, it's ok to stop scanning
+		this.log('restart scanning');
+		this.discoverTag();
+	}
+}
+
+TagAccessory.prototype.onWarning = function(message) {
+	this.log( 'scan warning: ' + message);
+}
+
 TagAccessory.prototype.onDiscoverPeripheral = function(peripheral) {
   var address = peripheral.id;
   if (address == 'unknown') {
     address = peripheral.id;
   }
 
-  //this.log( peripheral.address + ' ' + peripheral.id);
-  var canRegister = !this.address || address == this.address;
+  var canRegister = !this.address || peripheral.address == this.address || peripheral.id == this.address;
   // this.log((canRegister ? 'connecting' : 'ignoring') + ' ' + peripheral.advertisement.localName + ' (' + address + ')');
   if (!canRegister) return;
   this.log( "Manufacturer data: " + peripheral.advertisement.manufacturerData.toString('hex'));
@@ -125,7 +142,20 @@ TagAccessory.prototype.onDiscoverPeripheral = function(peripheral) {
 TagAccessory.prototype.onConnect = function(error) {
   if (error) { //  && error.toString().indexOf( 'already connected') < 0) {
     this.log('failed to connect: ' + error);
-    this.discoverTag();
+		if( error.toString().indexOf( 'already connected') >= 0) {
+			this.log('disconnecting peripheral...');
+			this.peripheral.disconnect();
+			//this.log('resetting noble...');
+			//this.noble.reset();
+			this.log('adapter state: ' + this.noble.state);
+			if( this.noble.state == 'poweredOn') {
+				this.log( 'start scanning');
+				this.discoverTag();
+			}
+		}
+		else {
+			this.discoverTag();
+		}
     return;
   }
 
@@ -354,10 +384,9 @@ TagAccessory.prototype.requestBattery = function() {
 	this.log( 'requested battery');
 }
 
-
 TagAccessory.prototype.identify = function(callback) {
   this.log('identify');
-  if (this.peripheral) {
+  if ( this.peripheral != null) {
     this.alertCharacteristic.write(new Buffer([0x02]), true);
     setTimeout(function() {
       this.alertCharacteristic.write(new Buffer([0x00]), true);
