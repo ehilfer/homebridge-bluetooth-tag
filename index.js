@@ -1,6 +1,7 @@
 var _ = require('lodash');
 
 var Service, Characteristic;
+var rgb = require('hsv-rgb');
 
 module.exports = function(homebridge) {
   Service = homebridge.hap.Service;
@@ -13,6 +14,12 @@ function TagAccessory(log, config) {
 
   this.address = config.address;
   this.type = config.type;
+
+	this.hue = 0;
+	this.saturation = 0;
+	this.brightness = 0;
+
+	this.rgb = [0,0,0];
 
 	this.connected = false;
 
@@ -41,12 +48,24 @@ TagAccessory.SAMLABS_BATTERY_UUID = '2a19'
 TagAccessory.SAMLABS_DATA_SERVICE_UUID = '3B989460-975F-11E4-A9FB-0002A5D5C51B'.replaceAll('-', '').toLowerCase()
 TagAccessory.SAMLABS_INDICATOR_UUID = '5BAAB0A0-980C-11E4-B5E9-0002A5D5C51B'.replaceAll('-', '').toLowerCase()
 TagAccessory.SAMLABS_LIGHTLEVEL_UUID = '4C592E60-980C-11E4-959A-0002A5D5C51B'.replaceAll('-', '').toLowerCase()
+TagAccessory.SAMLABS_LEDOUTPUT_UUID = '84fc1520-980c-11e4-8bed-0002a5d5c51b'.replaceAll('-', '').toLowerCase()
 
 TagAccessory.prototype.getServices = function() {
-  this.switchService = new Service.StatelessProgrammableSwitch();
-  this.batteryService = new Service.Battery();
 
-  return [this.switchService, this.batteryService];
+  this.batteryService = new Service.Battery();
+  if( this.type == "switch" || this.type == "holyiot") {
+    this.switchService = new Service.StatelessProgrammableSwitch();
+    return [this.switchService, this.batteryService];
+  }
+  else if( this.type == "samlabs-ldr") {
+    this.lightSensorService = new Service.LightSensor();
+    return [this.lightSensorService, this.batteryService];
+  }
+  else if( this.type == "samlabs-led") {
+    this.lightbulbService = new Service.Lightbulb();
+    return [this.lightbulbService, this.batteryService];
+  }
+
 };
 
 TagAccessory.prototype.onStateChange = function(state) {
@@ -86,12 +105,12 @@ TagAccessory.prototype.onWarning = function(message) {
 }
 
 TagAccessory.prototype.onDiscoverPeripheral = function(peripheral) {
-  var address = peripheral.address;
+  var address = peripheral.id;
   if (address == 'unknown') {
     address = peripheral.id;
   }
 
-  var canRegister = !this.address || address == this.address;
+  var canRegister = !this.address || peripheral.address == this.address || peripheral.id == this.address;
   // this.log((canRegister ? 'connecting' : 'ignoring') + ' ' + peripheral.advertisement.localName + ' (' + address + ')');
   if (!canRegister) return;
   this.log( "Manufacturer data: " + peripheral.advertisement.manufacturerData.toString('hex'));
@@ -130,7 +149,7 @@ TagAccessory.prototype.onDiscoverPeripheral = function(peripheral) {
 };
 
 TagAccessory.prototype.onConnect = function(error) {
-  if (error) {
+  if (error) { //  && error.toString().indexOf( 'already connected') < 0) {
     this.log('failed to connect: ' + error);
 		if( error.toString().indexOf( 'already connected') >= 0) {
 			this.log('disconnecting peripheral...');
@@ -229,10 +248,9 @@ TagAccessory.prototype.onDiscoverServicesAndCharacteristics = function(error, se
 			}.bind(this));
 		}
 	}
-	else if( this.type == "samlabs-ldr") {
+	else if( this.type == "samlabs-ldr" || this.type == 'samlabs-led') {
 		this.batteryCharacteristic = characteristics[TagAccessory.SAMLABS_BATTERY_SERVICE_UUID + ':' + TagAccessory.SAMLABS_BATTERY_UUID];
 		this.indicatorCharacteristic = characteristics[TagAccessory.SAMLABS_DATA_SERVICE_UUID + ':' + TagAccessory.SAMLABS_INDICATOR_UUID];
-		this.lightLevelCharacteristic = characteristics[TagAccessory.SAMLABS_DATA_SERVICE_UUID + ':' + TagAccessory.SAMLABS_LIGHTLEVEL_UUID];
 
 		if (!this.batteryCharacteristic) {
 			this.log('could not find battery characteristic');
@@ -252,34 +270,106 @@ TagAccessory.prototype.onDiscoverServicesAndCharacteristics = function(error, se
 			this.log('could not find indicator characteristic');
 		} else {
 			this.log('writing color to device');
-			this.indicatorCharacteristic.write( new Buffer( [0x00, 0x0a, 0x00]), true) // writeWithoutResponse
+			this.indicatorCharacteristic.write( new Buffer( [0x00, 0x0a, 0x00]), false) // writeWithoutResponse
 			this.log('wrote color to device');
 		}
 
-		if (!this.lightlevelCharacteristic) {
-			this.log('could not find lightLevel characteristic');
-		} else {
-			this.lightLevelCharacteristic.on('read', this.onSAMLabsLightLevelRead.bind(this))
-			this.lightLevelCharacteristic.notify(true)
-			this.lightLevelCharacteristic.subscribe(function (error) {
-				if (error) {
-					this.log('failed to subscribe to samlabs light level read');
-				} else {
-					this.log('subscribed to samlabs light level read');
-				}
-			}.bind(this));
+		if( this.type == "samlabs-ldr") {
+			this.lightLevelCharacteristic = characteristics[TagAccessory.SAMLABS_DATA_SERVICE_UUID + ':' + TagAccessory.SAMLABS_LIGHTLEVEL_UUID];
+			if (!this.lightLevelCharacteristic) {
+				this.log('could not find lightLevel characteristic');
+			} else {
+				this.lightLevelCharacteristic.on('read', this.onSAMLabsLightLevelRead.bind(this))
+				this.lightLevelCharacteristic.notify(true)
+				this.lightLevelCharacteristic.subscribe(function (error) {
+					if (error) {
+						this.log('failed to subscribe to samlabs light level read');
+					} else {
+						this.log('subscribed to samlabs light level read');
+					}
+				}.bind(this));
+			}
 		}
 
+		if( this.type == "samlabs-led") {
+			this.ledCharacteristic = characteristics[TagAccessory.SAMLABS_DATA_SERVICE_UUID + ':' + TagAccessory.SAMLABS_LEDOUTPUT_UUID];
+			if (!this.ledCharacteristic) {
+				this.log('could not find led characteristic');
+			}
+			else {
+				this.log('setting onSet callbacks');
+				this.lightbulbService.getCharacteristic(Characteristic.On)
+        .onSet(this.handleOnSet.bind(this));
+				this.log('set On callback');
+				this.lightbulbService.getCharacteristic(Characteristic.Hue)
+        .onSet(this.handleHueSet.bind(this));
+				this.log('set Hue callback');
+				this.lightbulbService.getCharacteristic(Characteristic.Saturation)
+        .onSet(this.handleSaturationSet.bind(this));
+				this.log('set Saturation callback');
+				this.lightbulbService.getCharacteristic(Characteristic.Brightness)
+        .onSet(this.handleBrightnessSet.bind(this));
+				this.log('set Brightness callback');
+			}
+		}
 	}
 };
 
+// TODO: make a common method to update an rgb array based on saved h, s, v
+// Then set a timeout after each of these updates and cancel the timeout if another set comes in and then when it finally
+// completes write the rgb to the peripheral
+
+TagAccessory.prototype.updateLED = function( value) {
+	// TODO: sned the current rgb value to the device, or 0 if the state is not on
+	this.rgb = rgb( this.hue, this.saturation, this.brightness);
+  if( this.on) {
+		this.ledCharacteristic.write( Buffer.from( this.rgb), false);
+	} else {
+		this.ledCharacteristic.write( Buffer.from( [0,0,0]), false);
+	}
+}
+
+TagAccessory.prototype.handleOnSet = function( value) {
+    this.log.debug('Triggered SET On:' + value);
+		this.on = value;
+		// TODO - for On false, have 0,0,0 sent to device
+		// for On true, have whatever calculate rgb sent to device
+		clearTimeout(this.ledTimeout)
+		this.ledTimeout = setTimeout( this.updateLED.bind(this), 200);
+}
+
+TagAccessory.prototype.handleHueSet = function( value) {
+    this.log.debug('Triggered SET Hue:' + value);
+		this.hue = value;
+		clearTimeout(this.ledTimeout)
+		this.ledTimeout = setTimeout( this.updateLED.bind(this), 200);
+		this.ledCharacteristic.write( new Buffer( [0x00, 0x00, 0x0a]), false);
+}
+
+TagAccessory.prototype.handleSaturationSet = function( value) {
+    this.log.debug('Triggered SET Saturation:' + value);
+		this.saturation = value;
+		clearTimeout(this.ledTimeout)
+		this.ledTimeout = setTimeout( this.updateLED.bind(this), 200);
+		this.ledCharacteristic.write( new Buffer( [0x00, 0x00, 0x0a]), false);
+}
+
+TagAccessory.prototype.handleBrightnessSet = function( value) {
+    this.log.debug('Triggered SET Brightness:' + value);
+		this.brightness = value;
+		clearTimeout(this.ledTimeout)
+		this.ledTimeout = setTimeout( this.updateLED.bind(this), 200);
+		this.ledCharacteristic.write( new Buffer( [0x00, 0x00, 0x0a]), false);
+}
+
 TagAccessory.prototype.onSAMLabsLightLevelRead = function( data, notification) {
-	// read from uart and process battery value to homekit battery service or button state to homekit switch service
-	this.log( data)
+	this.log( data[0])
+	var characteristic = this.lightSensorService.getCharacteristic(Characteristic.CurrentAmbientLightLevel);
+	characteristic.setValue(0xff - data[0] + .001);
 }
 
 TagAccessory.prototype.onSAMLabsBatteryRead = function( data, notification) {
-	// read from uart and process battery value to homekit battery service or button state to homekit switch service
+	// callback from battery service on the device
 	this.log( data)
 	var battery = data[0];
 	this.log( 'got battery: ' + battery);

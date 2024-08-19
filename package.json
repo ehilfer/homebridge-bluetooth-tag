@@ -9,6 +9,7 @@
 		"homebridge": ">=0.2.0"
 	},
 	"dependencies": {
+		"hsv-rgb": "^1.0.0",
 		"lodash": "^4.17.21"
 	},
 	"peerDependencies": {
