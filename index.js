@@ -159,6 +159,9 @@ TagAccessory.prototype.onDisconnect = function(error) {
   this.log('disconnected: ' + error);
 	this.connected = false;
   this.peripheral = null;
+	// If this happens soon after connecting, or whil tyring to discover services, wait longer
+	// before re-scanning or trying to connect - sometimes the interfce powers on and off a few times and the 
+	// device may still think its connected and not be advertising
   this.discoverTag();
 };
 
